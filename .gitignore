@@ -1,6 +1,30 @@
+# Model Weights & Checkpoints
+*.pt
+*.pth
+*.h5
+*.bin
+*.ptl
+*.ckpt
+*.safetensors
+*.onnx
+
+# BERT & Transformers specific
 BERT-based-models/
-datasets/
 foundation-model/outputs/
+
+# Data & Datasets
+datasets/
+*.csv
+*.tsv
+*.jsonl
+*.parquet
+
+# Python Internals
 **/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# OS Specific
 .DS_Store
+Thumbs.db
