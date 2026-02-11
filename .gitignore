@@ -1,50 +1,54 @@
-# Model Weights & Checkpoints
+# ======================================================
+# Model Weights & Artifacts
+# ======================================================
 *.pt
 *.pth
-*.h5
 *.bin
-*.ptl
 *.ckpt
 *.safetensors
 *.onnx
-
-# ================================
-# GLoVE embeddings (DO NOT COMMIT)
-# ================================
-GLoVE/Bhili/
-GLoVE/Gondi/
-GLoVE/Kui/
-GLoVE/Mundari/
-GLoVE/Santali/
-
-# ================================
-# Word2Vec embeddings (DO NOT COMMIT)
-# ================================
-Word2Vec/Bhili/
-Word2Vec/Gondi/
-Word2Vec/Kui/
-Word2Vec/Mundari/
-Word2Vec/Santali/
+*.txt
 
 
+# ======================================================
+# GLoVE (ignore data, keep scripts)
+# ======================================================
+GLoVE/*/
+!GLoVE/*.py
+!GLoVE/*.sh
 
-# BERT & Transformers specific
-BERT-based-models/
+# ======================================================
+# Word2Vec (ignore data, keep scripts)
+# ======================================================
+Word2Vec/*/
+!Word2Vec/*.py
+!Word2Vec/*.sh
+
+# ======================================================
+# Tokenization (keep only tokenizer.py)
+# ======================================================
+tokenization/*
+!tokenization/tokenizer.py
+
+# ======================================================
+# Outputs & datasets
+# ======================================================
 foundation-model/outputs/
-
-# Data & Datasets
 datasets/
 *.csv
 *.tsv
 *.jsonl
 *.parquet
 
-# Python Internals
+# ======================================================
+# Python junk
+# ======================================================
 **/__pycache__/
 *.pyc
 *.pyo
-*.pyd
 
-# OS Specific
+# ======================================================
+# OS junk
+# ======================================================
 .DS_Store
 Thumbs.db
