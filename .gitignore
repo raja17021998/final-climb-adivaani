@@ -8,21 +8,24 @@
 *.safetensors
 *.onnx
 
-#GLoVE & Word2Vec
+# ================================
+# GLoVE embeddings (DO NOT COMMIT)
+# ================================
+GLoVE/Bhili/
+GLoVE/Gondi/
+GLoVE/Kui/
+GLoVE/Mundari/
+GLoVE/Santali/
 
+# ================================
+# Word2Vec embeddings (DO NOT COMMIT)
+# ================================
+Word2Vec/Bhili/
+Word2Vec/Gondi/
+Word2Vec/Kui/
+Word2Vec/Mundari/
+Word2Vec/Santali/
 
-GLoVE/Bhili
-GLoVE/Gondi
-GLoVE/Kui
-GLoVE/Mundari
-GLoVE/Santali
-
-
-Word2Vec/Bhili
-Word2Vec/Gondi
-Word2Vec/Kui
-Word2Vec/Mundari
-Word2Vec/Santali
 
 
 # BERT & Transformers specific
