@@ -11,18 +11,18 @@
 #GLoVE & Word2Vec
 
 
-/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Bhili
-/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Gondi
-/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Kui
-/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Mundari
-/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Santali
+GLoVE/Bhili
+GLoVE/Gondi
+GLoVE/Kui
+GLoVE/Mundari
+GLoVE/Santali
 
 
-/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Bhili
-/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Gondi
-/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Kui
-/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Mundari
-/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Santali
+Word2Vec/Bhili
+Word2Vec/Gondi
+Word2Vec/Kui
+Word2Vec/Mundari
+Word2Vec/Santali
 
 
 # BERT & Transformers specific
