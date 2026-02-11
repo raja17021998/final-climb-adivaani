@@ -8,6 +8,23 @@
 *.safetensors
 *.onnx
 
+#GLoVE & Word2Vec
+
+
+/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Bhili
+/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Gondi
+/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Kui
+/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Mundari
+/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE/Santali
+
+
+/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Bhili
+/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Gondi
+/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Kui
+/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Mundari
+/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec/Santali
+
+
 # BERT & Transformers specific
 BERT-based-models/
 foundation-model/outputs/
