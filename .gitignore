@@ -1,0 +1,6 @@
+BERT-based-models/
+datasets/
+foundation-model/outputs/
+**/__pycache__/
+*.pyc
+.DS_Store

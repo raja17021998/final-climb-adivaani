@@ -1,0 +1,42 @@
+I want to build a Seq2Seq model based on Lstm-Lstm architecture. For Hindi-Tribal pair, where tribal = Bhili, Gondi, Kui and Mundari. Encoder will be Birdirectional lstm and Decoder will be unidirectional lstm. Teacher forcing will be used. Use train-test split. And implement Early Stopping on Val Loss for Patience=5
+
+
+
+For the evaluation we will use BLEU (outof100) and chrf++. The final evaluation on will be on a held test set. The final csv must be like this: Actual Hindi, Actual Bhili (or other tribal), Predicted Bhili (or other tribal), Bleu, Chrf++. And at last print mean bleu and chrf scores.
+
+
+
+Train a sentence peice tokenizer and store this in this dir /home/user/Desktop/Shashwat/final-climb/baseline-funs , accessible to all. I will pass these tokens to the Encoder and Decoder. 
+
+
+
+All other work is to be done in this dir /home/user/Desktop/Shashwat/final-climb/baseline-funs/lstm-lstm
+
+
+Now give code in two modalities:
+
+1. One Encoder - Decoder (respective language csv to be selected as per variable). All train-val loss plots, eval results per language. You can name the directory as Bhili, Mundari as the language is there.
+
+2. Shared Encoder (hindi)- Multiple Decoders for diff tribal languages. In this first formalise how should we go about this. 
+
+
+
+I want this code to fall under ddp using multiple gpus and if multiple gpus are not found, then single gpu. This fallback should be like that. Also use train-val split should be there. 
+
+
+
+Use the same code structure ands everything and in dir /home/user/Desktop/Shashwat/final-climb/baseline-funs/transformer
+
+
+
+
+
+I want to use Transformer Encoder no of layers = 6 but keep it as a hyper-param and Transformer Decoder no of layers= 6
+
+
+
+Use Sinusoidal Positional Embeddings
+
+
+
+Give train.py and end eval.py
