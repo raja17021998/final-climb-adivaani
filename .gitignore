@@ -9,6 +9,9 @@
 *.onnx
 *.txt
 
+# Never commit pretrained models
+BERT-based-models/
+
 
 # ======================================================
 # GLoVE (ignore data, keep scripts)
@@ -39,6 +42,11 @@ datasets/
 *.tsv
 *.jsonl
 *.parquet
+
+
+# Large text corpora (never commit)
+**/corpus.txt
+
 
 # ======================================================
 # Python junk
