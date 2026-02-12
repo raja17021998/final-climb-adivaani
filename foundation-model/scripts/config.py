@@ -16,7 +16,7 @@ LOSS_DIR = "loss"
 # RUN MODE
 # ======================================================
 MODE = "debug"          # "debug" | "train"
-DEBUG_ROWS = 25000       # used only if MODE == "debug"
+DEBUG_ROWS = 2500       # used only if MODE == "debug"
 
 # ======================================================
 # LANGUAGE TOPOLOGY
