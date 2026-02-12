@@ -4,41 +4,53 @@ from pathlib import Path
 import sentencepiece as spm
 
 
-BASE_DIR = Path("/home/shashwat1/final-climb-shashwat-do-not-delete/Word2Vec")
+# ============================================================
+# PATHS
+# ============================================================
+
+BASE_DIR = Path("/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec")
+SP_MODEL_PATH = Path(
+    "/home/jovyan/final-climb-shashwat-do-not-delete/tokenization/joint_spm.model"
+)
 
 
 class MultiLangExplorer:
     def __init__(self, lang: str):
         """
         Explorer for SentencePiece-based Word2Vec embeddings.
-
-        Args:
-            lang (str): Language name (e.g., 'Bhili', 'Santali')
+        Works for ALL tribal languages.
         """
+
         self.lang = lang
         self.lang_dir = BASE_DIR / lang
-
         model_path = self.lang_dir / f"{lang.lower()}_weights.pt"
-        sp_model_path = BASE_DIR / "sentencepiece" / f"{lang.lower()}_sp.model"
 
         if not model_path.exists():
             raise FileNotFoundError(f"Missing model: {model_path}")
-        if not sp_model_path.exists():
-            raise FileNotFoundError(f"Missing SentencePiece model: {sp_model_path}")
 
+        if not SP_MODEL_PATH.exists():
+            raise FileNotFoundError(f"Missing joint SentencePiece model: {SP_MODEL_PATH}")
+
+        # ====================================================
         # Load Word2Vec weights
-        data = torch.load(model_path, weights_only=False)
+        # ====================================================
+        data = torch.load(model_path, map_location="cpu")
+
         self.vocab = data["vocab"]
         self.id_to_word = data["id_to_word"]
-        self.embeddings = data["weights"]["target_embeddings.weight"].cpu().numpy()
+
+        # 🔥 Correct key for your SGNS model
+        self.embeddings = data["weights"]["t.weight"].cpu().numpy()
 
         # Normalize embeddings for cosine similarity
         norm = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
         self.unit_embeddings = self.embeddings / (norm + 1e-10)
 
-        # Load SentencePiece
+        # ====================================================
+        # Load Joint SentencePiece
+        # ====================================================
         self.sp = spm.SentencePieceProcessor()
-        self.sp.load(str(sp_model_path))
+        self.sp.load(str(SP_MODEL_PATH))
 
         print(f"[OK] Loaded {lang}")
         print(f"     Vocab size: {len(self.vocab)}")
@@ -126,23 +138,26 @@ class MultiLangExplorer:
 
         print(f"\nAnalogy ({self.lang}): {a} - {b} + {c}")
         for tok, score in self.nearest_tokens(
-            target_vec, k=k, exclude=set(self.sp.encode(a, out_type=str))
+            target_vec,
+            k=k,
+            exclude=set(self.sp.encode(a, out_type=str)),
         ):
             print(f"{tok:20s} {score:.4f}")
 
 
-# -------------------------------------------------------------
+# ============================================================
 # Example usage
-# -------------------------------------------------------------
+# ============================================================
+
 if __name__ == "__main__":
-    explorer = MultiLangExplorer("Bhili")
 
-    # Inspect vocab
-    print("\nSample vocab:")
-    print(explorer.id_to_word[:20])
+    # Try any tribal language
+    for lang in ["Bhili", "Santali", "Mundari", "Gondi", "Kui", "Garo"]:
 
-    # Nearest neighbors
-    explorer.nearest_words("पूर्ति", k=10)
+        print("\n==============================")
+        print(f"Testing {lang}")
+        print("==============================")
 
-    # Analogy
-    explorer.analogy("पूर्ति", "पूरा", "करवा", k=10)
+        explorer = MultiLangExplorer(lang)
+
+        explorer.nearest_words("पूरा", k=5)

@@ -1,29 +1,57 @@
 #!/bin/bash
 set -e
 
-BASE="/home/kshhorizon/data/final-climb-shashwat-do-not-delete/Word2Vec"
+# ============================================================
+# CONFIG
+# ============================================================
+
+BASE="/home/jovyan/final-climb-shashwat-do-not-delete/Word2Vec"
 PYTHON=$(which python)
 
-GPUS=$(nvidia-smi -L | wc -l)
-echo "Detected GPUs: $GPUS"
 echo "Using python: $PYTHON"
+echo "Word2Vec dir: $BASE"
 
-LANGS=("Bhili" "Santali" "Mundari" "Gondi" "Kui")
+# ============================================================
+# GPU DETECTION (SAFE)
+# ============================================================
+
+if command -v nvidia-smi &> /dev/null; then
+    GPUS=$(nvidia-smi -L | wc -l)
+else
+    GPUS=0
+fi
+
+echo "Detected GPUs: $GPUS"
+
+# ============================================================
+# LANGUAGES (Tribal Only)
+# ============================================================
+
+LANGS=("Bhili" "Santali" "Mundari" "Gondi" "Kui" "Garo")
+
+# ============================================================
+# TRAIN LOOP
+# ============================================================
 
 for LANG in "${LANGS[@]}"
 do
-  echo "=============================="
-  echo "Training $LANG"
-  echo "=============================="
+  echo ""
+  echo "========================================"
+  echo "🚀 Training $LANG"
+  echo "========================================"
 
   if [ "$GPUS" -gt 1 ]; then
-    torchrun --standalone --nproc_per_node=$GPUS \
-      $PYTHON $BASE/train_w2vec.py --lang $LANG
+    torchrun --standalone \
+             --nproc_per_node=$GPUS \
+             "$BASE/train_w2vec.py" \
+             --lang "$LANG"
   else
-    $PYTHON $BASE/train_w2vec.py --lang $LANG
+    $PYTHON "$BASE/train_w2vec.py" \
+            --lang "$LANG"
   fi
 
-  wait
+  echo "✅ Completed $LANG"
 done
 
-echo "ALL TRAININGS COMPLETED"
+echo ""
+echo "🎉 ALL TRAININGS COMPLETED"

@@ -1,6 +1,7 @@
 # ============================================================
 # Multilingual SentencePiece Word2Vec (SGNS)
-# With live tqdm train/val loss + logs + plots
+# Fully Config-Driven | SPD Auto Scaling | DDP Compatible
+# Optimized Negative Sampling + SentencePiece Integration
 # ============================================================
 
 import os
@@ -10,40 +11,21 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
+import sentencepiece as spm
+
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, random_split, DistributedSampler
 from collections import Counter
-from pathlib import Path
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-# ============================================================
-# PATHS & CONFIG
-# ============================================================
-BASE_DIR = Path("/home/kshhorizon/data/final-climb-shashwat-do-not-delete")
-SAVE_ROOT = BASE_DIR / "Word2Vec"
+import config
 
-LANG_CONFIG = {
-    "Bhili":   {"file": "Hin_Bhi_Mar_Guj.csv", "col": 1},
-    "Santali": {"file": "San_Hin_Eng.csv",     "col": 2},
-    "Mundari": {"file": "Hin_Mun.csv",         "col": 1},
-    "Gondi":   {"file": "Hin_Gon.csv",         "col": 1},
-    "Kui":     {"file": "Hin_Kui.csv",         "col": 1},
-}
-
-# Hyperparameters
-EMBED_DIM   = 50
-WINDOW_SIZE = 5
-NEG_SAMPLES = 20
-BATCH_SIZE  = 8192
-EPOCHS      = 10
-MIN_COUNT   = 2
-SUBSAMPLE_T = 1e-5
-PATIENCE    = 5
 
 # ============================================================
 # DDP SETUP
 # ============================================================
+
 def setup_ddp():
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         rank = int(os.environ["RANK"])
@@ -55,45 +37,58 @@ def setup_ddp():
         rank, world_size, gpu = 0, 1, 0
     return rank, world_size, gpu
 
-# ============================================================
-# DATASET
-# ============================================================
-class Word2VecDataset(Dataset):
-    def __init__(self, sentences):
-        self.window = WINDOW_SIZE
 
-        # Count tokens (SentencePiece tokens already space-separated)
+# ============================================================
+# DATASET (NO NEGATIVE SAMPLING HERE)
+# ============================================================
+
+class Word2VecDataset(Dataset):
+    def __init__(self, sentences, window_size, min_count, subsample_t):
+
+        self.window = window_size
+        self.subsample_t = subsample_t
+
         word_counts = Counter()
         for s in sentences:
-            word_counts.update(str(s).split())
+            word_counts.update(s.split())
 
         self.word_counts = word_counts
         self.total_count = sum(word_counts.values())
 
         # Build vocab
-        self.id_to_word = [w for w, c in word_counts.items() if c >= MIN_COUNT] + ["<UNK>"]
+        self.id_to_word = [w for w, c in word_counts.items() if c >= min_count]
+        self.id_to_word.append("<UNK>")
         self.vocab = {w: i for i, w in enumerate(self.id_to_word)}
 
         # Negative sampling distribution
-        counts = np.array([word_counts.get(w, 1) for w in self.id_to_word], dtype=np.float64)
+        counts = np.array(
+            [word_counts.get(w, 1) for w in self.id_to_word],
+            dtype=np.float64,
+        )
         probs = np.power(counts, 0.75)
         self.noise_dist = torch.tensor(probs / probs.sum(), dtype=torch.float)
 
-        # Build skip-gram pairs with subsampling
+        # Build skip-gram pairs
         self.data = []
         for s in sentences:
             tokens = []
-            for w in str(s).split():
+
+            for w in s.split():
                 if w in self.vocab:
                     f = word_counts[w] / self.total_count
-                    p_keep = (np.sqrt(f / SUBSAMPLE_T) + 1) * (SUBSAMPLE_T / f)
+                    p_keep = (np.sqrt(f / self.subsample_t) + 1) * (
+                        self.subsample_t / f
+                    )
                     if np.random.rand() < p_keep:
                         tokens.append(self.vocab[w])
                 else:
                     tokens.append(self.vocab["<UNK>"])
 
             for i, target in enumerate(tokens):
-                for j in range(max(0, i - self.window), min(len(tokens), i + self.window + 1)):
+                for j in range(
+                    max(0, i - self.window),
+                    min(len(tokens), i + self.window + 1),
+                ):
                     if i != j:
                         self.data.append((target, tokens[j]))
 
@@ -102,19 +97,21 @@ class Word2VecDataset(Dataset):
 
     def __getitem__(self, idx):
         t, c = self.data[idx]
-        neg = torch.multinomial(self.noise_dist, NEG_SAMPLES, replacement=True)
-        return torch.tensor(t), torch.tensor(c), neg
+        return torch.tensor(t), torch.tensor(c)
+
 
 # ============================================================
 # MODEL
 # ============================================================
-class SGNS(nn.Module):
-    def __init__(self, vocab_size):
-        super().__init__()
-        self.t = nn.Embedding(vocab_size, EMBED_DIM)
-        self.c = nn.Embedding(vocab_size, EMBED_DIM)
 
-        init = 0.5 / EMBED_DIM
+class SGNS(nn.Module):
+    def __init__(self, vocab_size, embed_dim):
+        super().__init__()
+
+        self.t = nn.Embedding(vocab_size, embed_dim)
+        self.c = nn.Embedding(vocab_size, embed_dim)
+
+        init = 0.5 / embed_dim
         self.t.weight.data.uniform_(-init, init)
         self.c.weight.data.uniform_(-init, init)
 
@@ -128,51 +125,113 @@ class SGNS(nn.Module):
         ).mean()
 
         neg_loss = -torch.log(
-            torch.sigmoid(-torch.bmm(vn, vt.unsqueeze(2)).squeeze()) + 1e-10
+            torch.sigmoid(
+                -torch.bmm(vn, vt.unsqueeze(2)).squeeze()
+            ) + 1e-10
         ).sum(1).mean()
 
         return pos_loss + neg_loss
 
+
 # ============================================================
 # TRAIN ONE LANGUAGE
 # ============================================================
+
 def train_language(lang):
+
     rank, world, gpu = setup_ddp()
-    device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        f"cuda:{gpu}" if torch.cuda.is_available() else "cpu"
+    )
 
-    cfg = LANG_CONFIG[lang]
-    df = pd.read_csv(BASE_DIR / "datasets" / cfg["file"])[:17500]
-    sentences = df.iloc[:, cfg["col"]].astype(str).tolist()
+    # ---------------- CONFIG ----------------
+    cfg = config.TRIBAL_LANG_CONFIG[lang]
+    spd = config.compute_spd(lang)
+    params = config.get_scale_params(spd)
 
-    dataset = Word2VecDataset(sentences)
+    EMBED_DIM   = config.EMBED_DIM
+    WINDOW_SIZE = params["WINDOW_SIZE"]
+    NEG_SAMPLES = params["NEG_SAMPLES"]
+    MIN_COUNT   = params["MIN_COUNT"]
+    EPOCHS      = params["EPOCHS"]
+    SUBSAMPLE_T = params["SUBSAMPLE_T"]
+
+    BATCH_SIZE  = config.BATCH_SIZE
+    LR          = config.LR
+    PATIENCE    = config.PATIENCE
+
+    if rank == 0:
+        print(f"\n========== {lang} ==========")
+        print(f"SPD: {spd}")
+        print(f"Params: {params}")
+        print(f"Embedding Dim: {EMBED_DIM}")
+        print("============================\n")
+
+    # ---------------- LOAD DATA ----------------
+    df = pd.read_csv(config.BASE_DATA_DIR / cfg["file"])
+    raw_sentences = df.iloc[:, cfg["tribal_col"]].astype(str).tolist()
+
+    # ---------------- LOAD SENTENCEPIECE ----------------
+    sp = spm.SentencePieceProcessor()
+    sp.load("/home/jovyan/final-climb-shashwat-do-not-delete/tokenization/joint_spm.model")
+
+    # Encode into subword space
+    sentences = []
+    for s in raw_sentences:
+        pieces = sp.encode(s, out_type=str)
+        if pieces:
+            sentences.append(" ".join(pieces))
+
+    # ---------------- DATASET ----------------
+    dataset = Word2VecDataset(
+        sentences,
+        WINDOW_SIZE,
+        MIN_COUNT,
+        SUBSAMPLE_T,
+    )
+
+    noise_dist = dataset.noise_dist.to(device)
+
     train_len = int(0.9 * len(dataset))
-    train_ds, val_ds = random_split(dataset, [train_len, len(dataset) - train_len])
+    train_ds, val_ds = random_split(
+        dataset, [train_len, len(dataset) - train_len]
+    )
 
     sampler = DistributedSampler(train_ds) if world > 1 else None
+
     train_loader = DataLoader(
-        train_ds, BATCH_SIZE, sampler=sampler, shuffle=(sampler is None)
+        train_ds,
+        BATCH_SIZE,
+        sampler=sampler,
+        shuffle=(sampler is None),
     )
+
     val_loader = DataLoader(val_ds, BATCH_SIZE)
 
-    model = SGNS(len(dataset.vocab)).to(device)
+    model = SGNS(len(dataset.vocab), EMBED_DIM).to(device)
+
     if world > 1:
         model = DDP(model, device_ids=[gpu])
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
 
-    lang_dir = SAVE_ROOT / lang
+    lang_dir = config.SAVE_ROOT / lang
     if rank == 0:
         lang_dir.mkdir(parents=True, exist_ok=True)
         log_rows = []
 
     best_val = float("inf")
-    patience = 0
+    patience_counter = 0
+
+    # ============================================================
+    # TRAIN LOOP
+    # ============================================================
 
     for epoch in range(1, EPOCHS + 1):
+
         if sampler:
             sampler.set_epoch(epoch)
 
-        # ---------------- TRAIN ----------------
         model.train()
         train_loss = 0.0
 
@@ -182,40 +241,69 @@ def train_language(lang):
             disable=(rank != 0),
         )
 
-        for step, (t, c, n) in enumerate(pbar, start=1):
-            t, c, n = t.to(device), c.to(device), n.to(device)
+        for step, (t, c) in enumerate(pbar, start=1):
+
+            t, c = t.to(device), c.to(device)
+            batch_size = t.size(0)
+
+            neg = torch.multinomial(
+                noise_dist,
+                batch_size * NEG_SAMPLES,
+                replacement=True,
+            ).view(batch_size, NEG_SAMPLES)
+
             optimizer.zero_grad()
-            loss = model(t, c, n)
+            loss = model(t, c, neg)
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
-            pbar.set_postfix(train_loss=f"{train_loss / step:.4f}")
+            pbar.set_postfix(
+                train_loss=f"{train_loss / step:.4f}"
+            )
 
         train_loss /= len(train_loader)
 
         # ---------------- VALIDATION ----------------
         model.eval()
         val_loss = 0.0
+
         with torch.no_grad():
-            for t, c, n in val_loader:
-                t, c, n = t.to(device), c.to(device), n.to(device)
-                val_loss += model(t, c, n).item()
+            for t, c in val_loader:
+                t, c = t.to(device), c.to(device)
+                batch_size = t.size(0)
+
+                neg = torch.multinomial(
+                    noise_dist,
+                    batch_size * NEG_SAMPLES,
+                    replacement=True,
+                ).view(batch_size, NEG_SAMPLES)
+
+                val_loss += model(t, c, neg).item()
+
         val_loss /= len(val_loader)
 
-        # ---------------- LOGGING ----------------
+        # ---------------- EARLY STOPPING ----------------
         if rank == 0:
+
             log_rows.append(
-                {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss}
+                {
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                }
             )
 
             tqdm.write(
-                f"[{lang}] Epoch {epoch} | Train: {train_loss:.4f} | Val: {val_loss:.4f}"
+                f"[{lang}] Epoch {epoch} | "
+                f"Train: {train_loss:.4f} | "
+                f"Val: {val_loss:.4f}"
             )
 
             if val_loss < best_val:
                 best_val = val_loss
-                patience = 0
+                patience_counter = 0
+
                 torch.save(
                     {
                         "vocab": dataset.vocab,
@@ -227,39 +315,31 @@ def train_language(lang):
                     lang_dir / f"{lang.lower()}_weights.pt",
                 )
             else:
-                patience += 1
-                if patience >= PATIENCE:
+                patience_counter += 1
+                if patience_counter >= PATIENCE:
+                    print("Early stopping triggered.")
                     break
-
-    # ---------------- SAVE LOGS + PLOT ----------------
-    if rank == 0:
-        log_df = pd.DataFrame(log_rows)
-        log_df.to_csv(lang_dir / f"train_log_{lang.lower()}_w2vec.csv", index=False)
-
-        plt.figure(figsize=(8, 5))
-        plt.plot(log_df["epoch"], log_df["train_loss"], label="Train")
-        plt.plot(log_df["epoch"], log_df["val_loss"], label="Val")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.title(f"{lang} Word2Vec Training")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(lang_dir / f"loss_plot_{lang.lower()}_w2vec.png")
-        plt.close()
 
     if world > 1:
         dist.destroy_process_group()
 
+
 # ============================================================
-# ENTRY POINT (MULTILINGUAL)
+# ENTRY POINT
 # ============================================================
+
 if __name__ == "__main__":
+
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lang", type=str, required=True, choices=LANG_CONFIG.keys())
+    parser.add_argument(
+        "--lang",
+        type=str,
+        required=True,
+        choices=config.TRIBAL_LANG_CONFIG.keys(),
+    )
+
     args = parser.parse_args()
 
     train_language(args.lang)
-
