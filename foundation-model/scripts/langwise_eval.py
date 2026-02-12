@@ -68,7 +68,7 @@ df = pd.read_csv(os.path.join(config.DATA_DIR, "val.csv"))
 
 if config.MODE == "debug":
     df = df.sample(
-        n=min(len(df), config.DEBUG_ROWS),
+        n=min(len(df), config.TEST_DEBUG_ROWS),
         random_state=config.SEED,
     )
 
@@ -100,13 +100,16 @@ iterator = tqdm(
 # ======================================================
 for idx, r in iterator:
 
-    src_protected, mapping = protect_text(r.source_sentence)
+    src_protected, mapping = protect_text(r[config.SOURCE_COL])
 
-    tok.src_lang = r.source_lang
-    tok.tgt_lang = r.target_lang
 
-    direction = infer_route(r.source_lang, r.target_lang)
-    tribal = infer_tribal(r.source_lang, r.target_lang)
+    tok.src_lang = r[config.SOURCE_LANG_COL]
+    tok.tgt_lang = r[config.TARGET_LANG_COL]
+
+
+    direction = infer_route(r[config.SOURCE_LANG_COL], r[config.TARGET_LANG_COL])
+    tribal = infer_tribal(r[config.SOURCE_LANG_COL], r[config.TARGET_LANG_COL])
+
 
     beam = config.BEAM_BY_ROUTE.get(direction, config.DEFAULT_BEAM)
 
@@ -119,10 +122,12 @@ for idx, r in iterator:
         src_protected,
         return_tensors="pt",
         truncation=True,
-        max_length=config.MAX_LEN,
+        max_length=config.GEN_MAX_LEN,
+
     ).to(device)
 
-    forced = tok.convert_tokens_to_ids(r.target_lang)
+    forced = tok.convert_tokens_to_ids(r[config.TARGET_LANG_COL])
+
 
     with torch.no_grad():
         out = model.generate(
@@ -138,7 +143,7 @@ for idx, r in iterator:
     )
 
     pred = str(pred).strip()
-    ref = str(r.target_sentence).strip()
+    ref = str(r[config.TARGET_COL]).strip()
 
     # ======================================================
     # SAFE METRIC COMPUTATION
@@ -165,9 +170,9 @@ for idx, r in iterator:
     rows.append({
         "Tribal": tribal,
         "Direction": direction,
-        "Source Language": r.source_lang,
-        "Target Language": r.target_lang,
-        "Source Sentence": r.source_sentence,
+        "Source Language": r[config.SOURCE_LANG_COL],
+        "Target Language": r[config.TARGET_LANG_COL],
+        "Source Sentence": r[config.SOURCE_COL],
         "Target Sentence (Actual)": ref,
         "Target Sentence (Predicted)": pred,
         "BLEU (sentence)": bleu_score,
