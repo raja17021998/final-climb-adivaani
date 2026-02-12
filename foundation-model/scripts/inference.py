@@ -1,166 +1,121 @@
+# inference.py
 import os
-import argparse
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from text_protection import protect_text, restore_text
+import config
+
+_model = None
+_tok = None
+_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 # ======================================================
-# PATHS
+# LANGUAGE INFERENCE
 # ======================================================
-BASE_DIR = "/home/kshhorizon/data/final-climb-shashwat-do-not-delete/foundation-model"
+def _infer_lang(token, table):
+    for name, prefixes in table.items():
+        if any(token.startswith(p) for p in prefixes):
+            return name
+    return None
 
-# ======================================================
-# MODEL MAP
-# ======================================================
-MODEL_MAP = {
-    "nllb-200-600m": "facebook/nllb-200-600M",
-    "nllb-200-1.3B": "facebook/nllb-200-1.3B",
-    "nllb-200-3.3B": "facebook/nllb-200-3.3B",
-}
 
-TRIBAL_PREFIXES = ["bhi", "mun", "gon", "san", "gar", "kui"]
+def _infer_route(src_lang, tgt_lang):
+    sh = _infer_lang(src_lang, config.HUB_LANGS)
+    th = _infer_lang(tgt_lang, config.HUB_LANGS)
+    st = _infer_lang(src_lang, config.TRIBAL_LANGS)
+    tt = _infer_lang(tgt_lang, config.TRIBAL_LANGS)
 
-# ======================================================
-# ARGS
-# ======================================================
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--model_variant",
-    choices=list(MODEL_MAP.keys()),
-    required=True,
-)
-parser.add_argument(
-    "--use_lora",
-    action="store_true",
-    help="Load LoRA adapter (ONLY valid for nllb-200-3.3B)",
-)
-
-args = parser.parse_args()
-
-# ======================================================
-# VALIDATION
-# ======================================================
-if args.use_lora and args.model_variant != "nllb-200-3.3B":
-    raise ValueError("--use_lora is only supported for nllb-200-3.3B")
-
-# ======================================================
-# DEVICE
-# ======================================================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"🚀 Using device: {device}")
-if device.type == "cuda":
-    print(f"🖥️  GPU: {torch.cuda.get_device_name(0)}")
-
-# ======================================================
-# RESOLVE MODEL DIR
-# ======================================================
-variant_name = args.model_variant.replace(".", "_")
-suffix = "lora" if args.use_lora else "full"
-
-MODEL_DIR = os.path.join(
-    BASE_DIR,
-    "outputs",
-    f"{variant_name}_{suffix}",
-)
-
-print(f"📦 Loading model from: {MODEL_DIR}")
-
-# ======================================================
-# LOAD TOKENIZER
-# ======================================================
-tokenizer = AutoTokenizer.from_pretrained(
-    MODEL_DIR,
-    local_files_only=True,
-)
-
-# ======================================================
-# LOAD MODEL
-# ======================================================
-if args.use_lora:
-    from peft import PeftModel
-
-    base_model = AutoModelForSeq2SeqLM.from_pretrained(
-        MODEL_MAP[args.model_variant],
-        torch_dtype=torch.bfloat16 if device.type == "cuda" else torch.float32,
-        use_safetensors=True,
-    )
-
-    model = PeftModel.from_pretrained(
-        base_model,
-        MODEL_DIR,
-        local_files_only=True,
-    )
-else:
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        MODEL_DIR,
-        torch_dtype=torch.bfloat16 if device.type == "cuda" else torch.float32,
-        use_safetensors=True,
-        local_files_only=True,
-    )
-
-model.to(device).eval()
-
-# ======================================================
-# HELPERS
-# ======================================================
-def is_tribal(lang_token: str) -> bool:
-    return any(lang_token.startswith(p) for p in TRIBAL_PREFIXES)
-
-def infer_direction(src_lang: str, tgt_lang: str) -> str:
-    if is_tribal(tgt_lang) and not is_tribal(src_lang):
+    if sh and tt:
         return "hub_to_tribal"
-    if is_tribal(src_lang) and not is_tribal(tgt_lang):
+    if st and th:
         return "tribal_to_hub"
     return "other"
 
-def beam_size_for_direction(direction: str) -> int:
-    # Consistent with evaluation policy
-    return 5 if direction == "hub_to_tribal" else 3
 
 # ======================================================
-# INTERACTIVE INFERENCE LOOP
+# LOAD MODEL (LAZY)
 # ======================================================
-print("\n💬 Interactive NLLB inference (Ctrl+C to exit)\n")
+def _load():
+    global _model, _tok
 
-while True:
-    try:
-        src = input("Source sentence: ").strip()
-        sl = input("Source lang token (e.g. hin_Deva): ").strip()
-        tl = input("Target lang token (e.g. san_Olck): ").strip()
+    if _model is not None:
+        return
 
-        protected, mapping = protect_text(src)
+    variant = config.DEFAULT_MODEL_VARIANT.replace(".", "_")
+    suffix = "lora" if config.LORA_ENABLED else "full"
 
-        tokenizer.src_lang = sl
-        tokenizer.tgt_lang = tl
+    model_dir = os.path.join(
+        config.OUTPUT_DIR,
+        f"{variant}_{suffix}",
+        "final_model_weight"
+    )
 
-        direction = infer_direction(sl, tl)
-        beam_size = beam_size_for_direction(direction)
+    if not os.path.exists(model_dir):
+        raise FileNotFoundError(f"Model directory not found:\n{model_dir}")
 
-        tgt_id = tokenizer.convert_tokens_to_ids(tl)
+    _tok = AutoTokenizer.from_pretrained(
+        model_dir,
+        local_files_only=True,
+    )
 
-        inputs = tokenizer(
-            protected,
-            return_tensors="pt",
-            truncation=True,
-            max_length=128,
-        ).to(device)
+    if config.LORA_ENABLED:
+        from peft import PeftModel
 
-        with torch.no_grad():
-            out = model.generate(
-                **inputs,
-                max_length=128,
-                num_beams=beam_size,
-                forced_bos_token_id=tgt_id,
-                early_stopping=True,
-            )
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(
+            config.MODEL_MAP[config.DEFAULT_MODEL_VARIANT],
+            torch_dtype=torch.bfloat16 if _device.type == "cuda" else torch.float32,
+        )
 
-        pred = tokenizer.decode(out[0], skip_special_tokens=True)
-        restored = restore_text(pred, mapping)
+        _model = PeftModel.from_pretrained(
+            base_model,
+            model_dir,
+            local_files_only=True,
+        )
 
-        print(f"\n🧭 Direction: {direction}")
-        print(f"🔍 Beam size: {beam_size}")
-        print("🟢 Output:", restored, "\n")
+    else:
+        _model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_dir,
+            torch_dtype=torch.bfloat16 if _device.type == "cuda" else torch.float32,
+            local_files_only=True,
+        )
 
-    except KeyboardInterrupt:
-        print("\n👋 Exiting inference.")
-        break
+    _model.to(_device).eval()
+
+
+# ======================================================
+# TRANSLATE
+# ======================================================
+def translate(sentence: str, src_lang: str, tgt_lang: str) -> str:
+    _load()
+
+    if not sentence or not sentence.strip():
+        return ""
+
+    protected, mapping = protect_text(sentence)
+
+    _tok.src_lang = src_lang
+    _tok.tgt_lang = tgt_lang
+
+    route = _infer_route(src_lang, tgt_lang)
+    beam = config.BEAM_BY_ROUTE.get(route, config.DEFAULT_BEAM)
+
+    inputs = _tok(
+        protected,
+        return_tensors="pt",
+        truncation=True,
+        max_length=config.MAX_LEN,
+    ).to(_device)
+
+    forced_id = _tok.convert_tokens_to_ids(tgt_lang)
+
+    with torch.no_grad():
+        output = _model.generate(
+            **inputs,
+            num_beams=beam,
+            forced_bos_token_id=forced_id,
+            max_length=config.MAX_LEN,
+        )
+
+    decoded = _tok.decode(output[0], skip_special_tokens=True)
+    return restore_text(decoded, mapping)

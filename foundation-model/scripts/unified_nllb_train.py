@@ -1,398 +1,11 @@
-# import os
-# import argparse
-# import torch
-# import pandas as pd
-# import csv
-# import json
-# import matplotlib.pyplot as plt
 
-# from collections import defaultdict
-# from datetime import datetime
-# from datasets import Dataset
-# from transformers import (
-#     AutoTokenizer,
-#     AutoModelForSeq2SeqLM,
-#     Trainer,
-#     TrainingArguments,
-#     DataCollatorForSeq2Seq,
-#     TrainerCallback,
-# )
-# from sacrebleu import corpus_bleu, corpus_chrf
-
-# from text_protection import protect_text
-
-# # ======================================================
-# # PATHS
-# # ======================================================
-# BASE_DIR = "/home/jovyan/final-climb-shashwat-do-not-delete/foundation-model"
-# DATA_DIR = "/home/jovyan/final-climb-shashwat-do-not-delete/datasets/foundation-model"
-
-# # ======================================================
-# # MODEL MAP
-# # ======================================================
-# MODEL_MAP = {
-#     "nllb-200-600m": "facebook/nllb-200-distilled-600M",
-#     "nllb-200-1.3B": "facebook/nllb-200-1.3B",
-#     "nllb-200-3.3B": "facebook/nllb-200-3.3B",
-# }
-
-# # ======================================================
-# # ARGS
-# # ======================================================
-# parser = argparse.ArgumentParser()
-# parser.add_argument("--mode", choices=["debug", "train"], default="train")
-# parser.add_argument("--debug_rows", type=int, default=200)
-# parser.add_argument("--epochs", type=int, default=10)
-# parser.add_argument("--batch_size", type=int, default=4)
-# parser.add_argument("--lr", type=float, default=1e-5)
-# parser.add_argument("--seed", type=int, default=42)
-# parser.add_argument("--model_variant", choices=list(MODEL_MAP.keys()), required=True)
-# parser.add_argument("--use_lora", action="store_true")
-
-# args = parser.parse_args()
-
-# # ======================================================
-# # VALIDATION
-# # ======================================================
-# if args.use_lora and args.model_variant != "nllb-200-3.3B":
-#     raise ValueError("--use_lora only supported for nllb-200-3.3B")
-
-# torch.manual_seed(args.seed)
-
-# # ======================================================
-# # DEVICE
-# # ======================================================
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# print(f"🚀 Using device: {device}")
-# if device.type == "cuda":
-#     print(f"🖥️ GPU: {torch.cuda.get_device_name(0)}")
-
-# # ======================================================
-# # OUTPUT DIR
-# # ======================================================
-# variant_name = args.model_variant.replace(".", "_")
-# suffix = "lora" if args.use_lora else "full"
-
-# OUT_DIR = os.path.join(BASE_DIR, "outputs", f"{variant_name}_{suffix}")
-# os.makedirs(OUT_DIR, exist_ok=True)
-
-# # ======================================================
-# # DATA LOADING
-# # ======================================================
-# def load_csv(path, limit=None):
-#     df = pd.read_csv(path)
-#     if limit:
-#         df = df.sample(n=limit, random_state=args.seed)
-#     return Dataset.from_pandas(df.reset_index(drop=True))
-
-# train_ds = load_csv(
-#     os.path.join(DATA_DIR, "train.csv"),
-#     args.debug_rows if args.mode == "debug" else None,
-# )
-# val_ds = load_csv(
-#     os.path.join(DATA_DIR, "val.csv"),
-#     args.debug_rows if args.mode == "debug" else None,
-# )
-
-# # ======================================================
-# # METADATA DERIVATION
-# # ======================================================
-# TRIBAL_PREFIXES = {
-#     "bhi": "bhili",
-#     "mun": "mundari",
-#     "gon": "gondi",
-#     "san": "santali",
-#     "gar": "garo",
-#     "kui": "kuii",
-# }
-
-
-# def infer_tribal(lang):
-#     for k, v in TRIBAL_PREFIXES.items():
-#         if lang.startswith(k):
-#             return v
-#     return None
-
-
-# def infer_hub_lang(lang):
-#     if lang.startswith("hin"):
-#         return "hindi"
-#     if lang.startswith("eng"):
-#         return "english"
-#     return None
-
-
-# def infer_lang_name(lang):
-#     """
-#     Returns canonical language name for logging/plots.
-#     """
-#     tribal = infer_tribal(lang)
-#     if tribal:
-#         return tribal
-
-#     hub = infer_hub_lang(lang)
-#     if hub:
-#         return hub
-
-#     return "other"
-
-
-# def infer_direction(src, tgt):
-#     src_name = infer_lang_name(src)
-#     tgt_name = infer_lang_name(tgt)
-#     return f"{src_name}_to_{tgt_name}"
-
-
-# def attach_metadata(ds):
-#     def _add(batch):
-#         tribal = []
-#         direction = []
-#         for s, t in zip(batch["source_lang"], batch["target_lang"]):
-#             tribal.append(infer_tribal(s) or infer_tribal(t))
-#             direction.append(infer_direction(s, t))
-#         batch["tribal_lang"] = tribal
-#         batch["direction"] = direction
-#         return batch
-#     return ds.map(_add, batched=True)
-
-# train_ds = attach_metadata(train_ds)
-# val_ds = attach_metadata(val_ds)
-
-
-# class MetadataSafeDataCollator(DataCollatorForSeq2Seq):
-#     def __call__(self, features):
-#         for f in features:
-#             f.pop("source_sentence", None)
-#             f.pop("target_sentence", None)
-#             f.pop("source_lang", None)
-#             f.pop("target_lang", None)
-#             f.pop("tribal_lang", None)
-#             f.pop("direction", None)
-#             f.pop("dataset", None)   # ✅ REQUIRED
-#         return super().__call__(features)
-
-
-
-# # ======================================================
-# # MODEL & TOKENIZER
-# # ======================================================
-# MODEL_ID = MODEL_MAP[args.model_variant]
-# tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-
-# model = AutoModelForSeq2SeqLM.from_pretrained(
-#     MODEL_ID,
-#     torch_dtype=torch.bfloat16 if device.type == "cuda" else torch.float32,
-# )
-# model.to(device)
-
-# # ======================================================
-# # PREPROCESSING (UNCHANGED)
-# # ======================================================
-# MAX_LEN = 128
-
-# def preprocess(batch):
-#     input_ids, masks, labels = [], [], []
-
-#     for s, t, sl, tl in zip(
-#         batch["source_sentence"],
-#         batch["target_sentence"],
-#         batch["source_lang"],
-#         batch["target_lang"],
-#     ):
-#         s, _ = protect_text(s)
-#         t, _ = protect_text(t)
-
-#         tokenizer.src_lang = sl
-#         tokenizer.tgt_lang = tl
-#         t = f"{tl} {t}"
-
-#         enc = tokenizer(s, truncation=True, padding="max_length", max_length=MAX_LEN)
-#         dec = tokenizer(text_target=t, truncation=True, padding="max_length", max_length=MAX_LEN)
-
-#         input_ids.append(enc["input_ids"])
-#         masks.append(enc["attention_mask"])
-#         labels.append([x if x != tokenizer.pad_token_id else -100 for x in dec["input_ids"]])
-
-#     batch["input_ids"] = input_ids
-#     batch["attention_mask"] = masks
-#     batch["labels"] = labels
-#     return batch
-
-# train_ds = train_ds.map(preprocess, batched=True)
-# val_ds = val_ds.map(preprocess, batched=True)
-
-# # ======================================================
-# # TRAINING ARGS
-# # ======================================================
-# training_args = TrainingArguments(
-#     output_dir=OUT_DIR,
-#     num_train_epochs=args.epochs,
-#     per_device_train_batch_size=args.batch_size,
-#     per_device_eval_batch_size=args.batch_size,
-#     learning_rate=args.lr,
-#     eval_strategy="epoch",
-#     save_strategy="epoch",
-#     load_best_model_at_end=True,
-#     metric_for_best_model="eval_loss",
-#     greater_is_better=False,
-#     save_total_limit=1,
-#     bf16=(device.type == "cuda"),
-#     report_to="none",
-#     remove_unused_columns=False,  # ✅ REQUIRED for tribal_lang & direction in callbacks
-# )
-
-
-# # ======================================================
-# # LANG-AWARE LOSS CALLBACK
-# # ======================================================
-# class LangAwareLossCallback(TrainerCallback):
-#     def __init__(self, out_dir, eval_dataset, tokenizer):
-#         self.eval_dataset = eval_dataset
-#         self.tokenizer = tokenizer
-#         self.lang_eval = defaultdict(list)
-
-#         self.log_dir = os.path.join(out_dir, "logs")
-#         os.makedirs(self.log_dir, exist_ok=True)
-#         self.log_path = os.path.join(self.log_dir, "langwise_eval.log")
-
-#         with open(self.log_path, "w") as f:
-#             f.write(f"Lang-wise Eval Log started at {datetime.now()}\n\n")
-
-
-#     def on_evaluate(self, args, state, control, **kwargs):
-#         model = kwargs["model"]
-#         model.eval()
-
-#         bucket = defaultdict(list)
-
-#         for ex in self.eval_dataset:
-#             self.tokenizer.src_lang = ex["source_lang"]
-#             self.tokenizer.tgt_lang = ex["target_lang"]
-
-#             enc = self.tokenizer(
-#                 ex["source_sentence"],
-#                 return_tensors="pt",
-#                 truncation=True,
-#                 max_length=128,
-#             ).to(model.device)
-
-#             with torch.no_grad():
-#                 out = model(
-#                     **enc,
-#                     labels=self.tokenizer(
-#                         f"{ex['target_lang']} {ex['target_sentence']}",
-#                         return_tensors="pt",
-#                         truncation=True,
-#                         max_length=128,
-#                     ).input_ids.to(model.device),
-#                 )
-
-#             key = f"{ex['tribal_lang']}_{ex['direction']}"
-#             bucket[key].append(out.loss.item())
-
-#         print(f"\n📊 [LangEval] Epoch {state.epoch:.0f}")
-#         with open(self.log_path, "a") as f:
-#             f.write(f"[Epoch {state.epoch:.0f}]\n")
-
-#             for k in sorted(bucket):
-#                 avg = sum(bucket[k]) / len(bucket[k])
-#                 self.lang_eval[k].append((state.epoch, avg))
-
-#                 print(f"  {k:<30} : {avg:.4f}")
-#                 f.write(f"{k:<30} : {avg:.4f}\n")
-
-#             f.write("\n")
-
-
-# loss_tracker = LangAwareLossCallback(
-#     OUT_DIR,
-#     eval_dataset=val_ds,
-#     tokenizer=tokenizer,
-# )
-
-
-# # ======================================================
-# # TRAINER
-# # ======================================================
-# trainer = Trainer(
-#     model=model,
-#     args=training_args,
-#     train_dataset=train_ds,
-#     eval_dataset=val_ds,
-#     # tokenizer=tokenizer,
-#     data_collator=MetadataSafeDataCollator(tokenizer, model),
-#     callbacks=[loss_tracker],
-# )
-
-# # ======================================================
-# # TRAIN
-# # ======================================================
-# trainer.train()
-# trainer.save_model(OUT_DIR)
-# tokenizer.save_pretrained(OUT_DIR)
-
-# # ======================================================
-# # SAVE LANG LOSS CSV + PLOTS
-# # ======================================================
-# with open(os.path.join(OUT_DIR, "lang_eval_losses.csv"), "w", newline="") as f:
-#     writer = csv.writer(f)
-#     writer.writerow(["epoch", "lang_direction", "loss"])
-#     for k, vals in loss_tracker.lang_eval.items():
-#         for e, l in vals:
-#             writer.writerow([e, k, l])
-
-# for k, vals in loss_tracker.lang_eval.items():
-#     plt.figure()
-#     plt.plot([x[0] for x in vals], [x[1] for x in vals], marker="o")
-#     plt.title(f"Eval Loss: {k}")
-#     plt.xlabel("Epoch")
-#     plt.ylabel("Loss")
-#     plt.grid(True)
-#     plt.savefig(os.path.join(OUT_DIR, f"loss_{k}.png"), dpi=150)
-#     plt.close()
-
-# # ======================================================
-# # BLEU + chrF (UNCHANGED)
-# # ======================================================
-# def evaluate_bleu_chrf(model, tokenizer, dataset):
-#     scores = defaultdict(lambda: {"refs": [], "hyps": []})
-
-#     model.eval()
-#     for ex in dataset:
-#         tokenizer.src_lang = ex["source_lang"]
-#         tokenizer.tgt_lang = ex["target_lang"]
-
-#         inp = tokenizer(ex["source_sentence"], return_tensors="pt").to(model.device)
-#         gen = model.generate(**inp, max_length=128)
-#         pred = tokenizer.decode(gen[0], skip_special_tokens=True)
-
-#         key = f"{ex['tribal_lang']}_{ex['direction']}"
-#         scores[key]["refs"].append(ex["target_sentence"])
-#         scores[key]["hyps"].append(pred)
-
-#     out = {}
-#     for k, v in scores.items():
-#         out[k] = {
-#             "BLEU": corpus_bleu(v["hyps"], [v["refs"]]).score,
-#             "chrF": corpus_chrf(v["hyps"], [v["refs"]]).score,
-#         }
-#     return out
-
-# metrics = evaluate_bleu_chrf(model, tokenizer, val_ds)
-
-# with open(os.path.join(OUT_DIR, "bleu_chrf.json"), "w") as f:
-#     json.dump(metrics, f, indent=2)
-
-# print("✅ Training + hub-aware language-wise evaluation complete.")
-# print(f"📁 Results saved to {OUT_DIR}")
 
 
 import os
-import argparse
 import torch
 import pandas as pd
+import torch.distributed as dist
 import csv
-import json
 import matplotlib.pyplot as plt
 
 from collections import defaultdict
@@ -406,205 +19,114 @@ from transformers import (
     DataCollatorForSeq2Seq,
     TrainerCallback,
 )
-from sacrebleu import corpus_bleu, corpus_chrf
+
+from torch.utils.data import WeightedRandomSampler, DataLoader
 
 from text_protection import protect_text
+import config
 
 # ======================================================
-# PATHS
+# DDP
 # ======================================================
-BASE_DIR = "/home/jovyan/final-climb-shashwat-do-not-delete/foundation-model"
-DATA_DIR = "/home/jovyan/final-climb-shashwat-do-not-delete/datasets/foundation-model"
+RANK = int(os.environ.get("RANK", 0))
+WORLD = int(os.environ.get("WORLD_SIZE", 1))
 
-# ======================================================
-# MODEL MAP
-# ======================================================
-MODEL_MAP = {
-    "nllb-200-600m": "facebook/nllb-200-distilled-600M",
-    "nllb-200-1.3B": "facebook/nllb-200-1.3B",
-    "nllb-200-3.3B": "facebook/nllb-200-3.3B",
-}
+if WORLD > 1 and not dist.is_initialized():
+    dist.init_process_group(
+        backend=config.DDP_BACKEND,
+        timeout=config.DDP_TIMEOUT,
+    )
 
-# ======================================================
-# ARGS
-# ======================================================
-parser = argparse.ArgumentParser()
-parser.add_argument("--mode", choices=["debug", "train"], default="train")
-parser.add_argument("--debug_rows", type=int, default=200)
-parser.add_argument("--epochs", type=int, default=10)
-parser.add_argument("--batch_size", type=int, default=4)
-parser.add_argument("--lr", type=float, default=1e-5)
-parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--model_variant", choices=list(MODEL_MAP.keys()), required=True)
-parser.add_argument("--use_lora", action="store_true")
-
-args = parser.parse_args()
-
-# ======================================================
-# VALIDATION
-# ======================================================
-if args.use_lora and args.model_variant != "nllb-200-3.3B":
-    raise ValueError("--use_lora only supported for nllb-200-3.3B")
-
-torch.manual_seed(args.seed)
-
-# ======================================================
-# DEVICE
-# ======================================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"🚀 Using device: {device}")
-if device.type == "cuda":
-    print(f"🖥️ GPU: {torch.cuda.get_device_name(0)}")
+torch.manual_seed(config.SEED)
 
 # ======================================================
 # OUTPUT DIR
 # ======================================================
-variant_name = args.model_variant.replace(".", "_")
-suffix = "lora" if args.use_lora else "full"
+variant = config.MODEL_VARIANT.replace(".", "_")
+suffix = "lora" if config.USE_LORA else "full"
+OUT_DIR = os.path.join(config.OUTPUT_DIR, f"{variant}_{suffix}")
 
-OUT_DIR = os.path.join(BASE_DIR, "outputs", f"{variant_name}_{suffix}")
-os.makedirs(OUT_DIR, exist_ok=True)
+FINAL_WEIGHT_DIR = os.path.join(OUT_DIR, "final_model_weight")
+
+if RANK == 0:
+    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(os.path.join(OUT_DIR, config.LOG_DIR), exist_ok=True)
+    os.makedirs(os.path.join(OUT_DIR, config.LOSS_DIR), exist_ok=True)
+    os.makedirs(FINAL_WEIGHT_DIR, exist_ok=True)
 
 # ======================================================
 # DATA LOADING
 # ======================================================
-def load_csv(path, limit=None):
+def load_csv(path):
     df = pd.read_csv(path)
-    if limit:
-        df = df.sample(n=limit, random_state=args.seed)
+    if config.MODE == "debug":
+        df = df.sample(
+            n=min(len(df), config.DEBUG_ROWS),
+            random_state=config.SEED,
+        )
     return Dataset.from_pandas(df.reset_index(drop=True))
 
-train_ds = load_csv(
-    os.path.join(DATA_DIR, "train.csv"),
-    args.debug_rows if args.mode == "debug" else None,
-)
-val_ds = load_csv(
-    os.path.join(DATA_DIR, "val.csv"),
-    args.debug_rows if args.mode == "debug" else None,
-)
+train_ds = load_csv(os.path.join(config.DATA_DIR, "train.csv"))
+val_ds = load_csv(os.path.join(config.DATA_DIR, "val.csv"))
 
 # ======================================================
-# METADATA DERIVATION (UPDATED – CANONICAL & DATA-DRIVEN)
+# ROUTE INFERENCE
 # ======================================================
-TRIBAL_PREFIXES = {
-    "bhi": "bhili",
-    "mun": "mundari",
-    "gon": "gondi",
-    "san": "santali",
-    "gar": "garo",
-    "kui": "kuii",
-}
-
-HUB_PREFIX_MAP = {
-    "hin": "hindi",
-    "eng": "english",
-    "mar": "marathi",
-    "guj": "gujarati",
-}
-
-def infer_tribal(lang):
-    for k, v in TRIBAL_PREFIXES.items():
-        if lang.startswith(k):
-            return v
+def infer_lang(token, table):
+    for name, prefixes in table.items():
+        if any(token.startswith(p) for p in prefixes):
+            return name
     return None
 
-def infer_hub(lang):
-    for k, v in HUB_PREFIX_MAP.items():
-        if lang.startswith(k):
-            return v
+def infer_bucket(src, tgt):
+    sh = infer_lang(src, config.HUB_LANGS)
+    th = infer_lang(tgt, config.HUB_LANGS)
+    st = infer_lang(src, config.TRIBAL_LANGS)
+    tt = infer_lang(tgt, config.TRIBAL_LANGS)
+
+    if sh and tt:
+        return f"{tt}_{sh}_to_{tt}"
+    if st and th:
+        return f"{st}_{st}_to_{th}"
     return None
 
-def infer_allowed_hubs_from_dataset(ds):
-    hubs = set()
-    for ex in ds:
-        for lang in (ex["source_lang"], ex["target_lang"]):
-            hub = infer_hub(lang)
-            if hub:
-                hubs.add(hub)
-    return hubs
-
-ALLOWED_HUBS = infer_allowed_hubs_from_dataset(train_ds)
-print(f"✅ Allowed hubs inferred from data: {sorted(ALLOWED_HUBS)}")
-
-def infer_canonical_direction(src, tgt):
-    src_tribal = infer_tribal(src)
-    tgt_tribal = infer_tribal(tgt)
-
-    src_hub = infer_hub(src)
-    tgt_hub = infer_hub(tgt)
-
-    # tribal -> hub
-    if src_tribal and tgt_hub in ALLOWED_HUBS:
-        return f"{src_tribal}_to_{tgt_hub}"
-
-    # hub -> tribal
-    if src_hub in ALLOWED_HUBS and tgt_tribal:
-        return f"{src_hub}_to_{tgt_tribal}"
-
-    return None
-
-def attach_metadata(ds):
-    def _add(batch):
-        tribal = []
-        direction = []
+def attach(ds):
+    def _f(batch):
+        bucket = []
         keep = []
 
         for s, t in zip(batch["source_lang"], batch["target_lang"]):
-            d = infer_canonical_direction(s, t)
+            b = infer_bucket(s, t)
+            bucket.append(b)
+            keep.append(b is not None)
 
-            if d is None:
-                keep.append(False)
-                tribal.append(None)
-                direction.append(None)
-            else:
-                keep.append(True)
-                tribal.append(infer_tribal(s) or infer_tribal(t))
-                direction.append(d)
-
-        batch["tribal_lang"] = tribal
-        batch["direction"] = direction
+        batch["bucket"] = bucket
         batch["_keep"] = keep
         return batch
 
-    ds = ds.map(_add, batched=True)
+    ds = ds.map(_f, batched=True)
     ds = ds.filter(lambda x: x["_keep"])
     return ds
 
-train_ds = attach_metadata(train_ds)
-val_ds = attach_metadata(val_ds)
+train_ds = attach(train_ds)
+val_ds = attach(val_ds)
 
 # ======================================================
-# DATA COLLATOR (UNCHANGED)
+# TOKENIZER / MODEL
 # ======================================================
-class MetadataSafeDataCollator(DataCollatorForSeq2Seq):
-    def __call__(self, features):
-        for f in features:
-            f.pop("source_sentence", None)
-            f.pop("target_sentence", None)
-            f.pop("source_lang", None)
-            f.pop("target_lang", None)
-            f.pop("tribal_lang", None)
-            f.pop("direction", None)
-            f.pop("dataset", None)
-        return super().__call__(features)
-
-# ======================================================
-# MODEL & TOKENIZER
-# ======================================================
-MODEL_ID = MODEL_MAP[args.model_variant]
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+tokenizer = AutoTokenizer.from_pretrained(
+    config.MODEL_MAP[config.MODEL_VARIANT]
+)
 
 model = AutoModelForSeq2SeqLM.from_pretrained(
-    MODEL_ID,
+    config.MODEL_MAP[config.MODEL_VARIANT],
     torch_dtype=torch.bfloat16 if device.type == "cuda" else torch.float32,
-)
-model.to(device)
+).to(device)
 
 # ======================================================
-# PREPROCESSING (UNCHANGED)
+# PREPROCESS
 # ======================================================
-MAX_LEN = 128
-
 def preprocess(batch):
     input_ids, masks, labels = [], [], []
 
@@ -621,177 +143,275 @@ def preprocess(batch):
         tokenizer.tgt_lang = tl
         t = f"{tl} {t}"
 
-        enc = tokenizer(s, truncation=True, padding="max_length", max_length=MAX_LEN)
-        dec = tokenizer(text_target=t, truncation=True, padding="max_length", max_length=MAX_LEN)
+        enc = tokenizer(
+            s,
+            truncation=True,
+            padding="max_length",
+            max_length=config.MAX_LEN,
+        )
+
+        dec = tokenizer(
+            text_target=t,
+            truncation=True,
+            padding="max_length",
+            max_length=config.MAX_LEN,
+        )
 
         input_ids.append(enc["input_ids"])
         masks.append(enc["attention_mask"])
-        labels.append([x if x != tokenizer.pad_token_id else -100 for x in dec["input_ids"]])
+        labels.append([
+            x if x != tokenizer.pad_token_id else -100
+            for x in dec["input_ids"]
+        ])
 
-    batch["input_ids"] = input_ids
-    batch["attention_mask"] = masks
-    batch["labels"] = labels
-    return batch
+    return {
+        "input_ids": input_ids,
+        "attention_mask": masks,
+        "labels": labels,
+        "bucket": batch["bucket"],
+    }
 
-train_ds = train_ds.map(preprocess, batched=True)
-val_ds = val_ds.map(preprocess, batched=True)
+train_ds = train_ds.map(
+    preprocess,
+    batched=True,
+    remove_columns=train_ds.column_names,
+)
 
-# ======================================================
-# TRAINING ARGS (UNCHANGED)
-# ======================================================
-training_args = TrainingArguments(
-    output_dir=OUT_DIR,
-    num_train_epochs=args.epochs,
-    per_device_train_batch_size=args.batch_size,
-    per_device_eval_batch_size=args.batch_size,
-    learning_rate=args.lr,
-    eval_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    metric_for_best_model="eval_loss",
-    greater_is_better=False,
-    save_total_limit=1,
-    bf16=(device.type == "cuda"),
-    report_to="none",
-    remove_unused_columns=False,
+val_ds = val_ds.map(
+    preprocess,
+    batched=True,
+    remove_columns=val_ds.column_names,
 )
 
 # ======================================================
-# LANG-AWARE LOSS CALLBACK (UNCHANGED)
+# 🆕 TEMPERATURE-BASED SAMPLING (ADDED SECTION)
 # ======================================================
-class LangAwareLossCallback(TrainerCallback):
-    def __init__(self, out_dir, eval_dataset, tokenizer):
-        self.eval_dataset = eval_dataset
-        self.tokenizer = tokenizer
+def build_temperature_sampler(dataset, temperature):
+
+    bucket_counts = defaultdict(int)
+    for b in dataset["bucket"]:
+        bucket_counts[b] += 1
+
+    alpha = 1.0 / temperature
+
+    bucket_probs = {
+        b: (count ** alpha)
+        for b, count in bucket_counts.items()
+    }
+
+    total = sum(bucket_probs.values())
+
+    bucket_probs = {
+        b: p / total
+        for b, p in bucket_probs.items()
+    }
+
+    sample_weights = [
+        bucket_probs[b] for b in dataset["bucket"]
+    ]
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+
+    return sampler
+
+train_sampler = build_temperature_sampler(
+    train_ds,
+    config.TEMPERATURE,
+)
+
+# ======================================================
+# LOSS STATE
+# ======================================================
+class LangState:
+    def __init__(self):
+        self.best = float("inf")
+        self.patience = 0
+        self.weight = 1.0
+
+lang_states = defaultdict(LangState)
+
+# ======================================================
+# COLLATOR
+# ======================================================
+class BucketAwareCollator(DataCollatorForSeq2Seq):
+    def __call__(self, features):
+        buckets = [f["bucket"] for f in features]
+        for f in features:
+            f.pop("bucket")
+        batch = super().__call__(features)
+        batch["bucket"] = buckets
+        return batch
+
+# ======================================================
+# TRAINER
+# ======================================================
+class WeightedTrainer(Trainer):
+
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs=False,
+        num_items_in_batch=None,
+    ):
+        buckets = inputs.pop("bucket")
+        outputs = model(**inputs)
+        loss = outputs.loss
+
+        weights = torch.tensor(
+            [lang_states[b].weight for b in buckets],
+            device=loss.device,
+            dtype=loss.dtype,
+        )
+
+        weighted_loss = loss * weights.mean()
+        return (weighted_loss, outputs) if return_outputs else weighted_loss
+
+    # 🆕 Only addition: override dataloader to use sampler
+    def get_train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.args.per_device_train_batch_size,
+            sampler=train_sampler,
+            collate_fn=self.data_collator,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+# ======================================================
+# CALLBACK
+# ======================================================
+class PatienceCallback(TrainerCallback):
+    def __init__(self):
         self.lang_eval = defaultdict(list)
 
-        self.log_dir = os.path.join(out_dir, "logs")
+        self.log_dir = os.path.join(OUT_DIR, "logs")
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_path = os.path.join(self.log_dir, "langwise_eval.log")
 
-        with open(self.log_path, "w") as f:
-            f.write(f"Lang-wise Eval Log started at {datetime.now()}\n\n")
+        if RANK == 0:
+            with open(self.log_path, "w") as f:
+                f.write(f"Lang-wise Eval Log started at {datetime.now()}\n\n")
 
     def on_evaluate(self, args, state, control, **kwargs):
         model = kwargs["model"]
         model.eval()
 
-        bucket = defaultdict(list)
+        bucket_loss = defaultdict(list)
 
-        for ex in self.eval_dataset:
-            self.tokenizer.src_lang = ex["source_lang"]
-            self.tokenizer.tgt_lang = ex["target_lang"]
-
-            enc = self.tokenizer(
-                ex["source_sentence"],
-                return_tensors="pt",
-                truncation=True,
-                max_length=128,
-            ).to(model.device)
+        for ex in val_ds:
+            enc = {
+                "input_ids": torch.tensor([ex["input_ids"]]).to(device),
+                "attention_mask": torch.tensor([ex["attention_mask"]]).to(device),
+                "labels": torch.tensor([ex["labels"]]).to(device),
+            }
 
             with torch.no_grad():
-                out = model(
-                    **enc,
-                    labels=self.tokenizer(
-                        f"{ex['target_lang']} {ex['target_sentence']}",
-                        return_tensors="pt",
-                        truncation=True,
-                        max_length=128,
-                    ).input_ids.to(model.device),
+                out = model(**enc)
+
+            bucket_loss[ex["bucket"]].append(out.loss.item())
+
+        if RANK != 0:
+            return
+
+        print(f"\n📊 [LangEval] Epoch {int(state.epoch)}")
+
+        with open(self.log_path, "a") as f:
+            f.write(f"[Epoch {int(state.epoch)}]\n")
+
+            for b in sorted(bucket_loss):
+                avg = sum(bucket_loss[b]) / len(bucket_loss[b])
+                state_obj = lang_states[b]
+
+                if avg < state_obj.best:
+                    state_obj.best = avg
+                    state_obj.patience = 0
+                else:
+                    state_obj.patience += 1
+                    if state_obj.patience >= config.PATIENCE:
+                        state_obj.weight = max(
+                            config.LOSS_FLOOR,
+                            state_obj.weight * config.LOSS_DECAY,
+                        )
+                        state_obj.patience = 0
+
+                self.lang_eval[b].append(
+                    (state.epoch, avg, state_obj.weight)
                 )
 
-            key = f"{ex['tribal_lang']}_{ex['direction']}"
-            bucket[key].append(out.loss.item())
+                print(
+                    f"  {b:<35} | "
+                    f"loss={avg:.4f} | "
+                    f"weight={state_obj.weight:.3f}"
+                )
 
-        print(f"\n📊 [LangEval] Epoch {state.epoch:.0f}")
-        with open(self.log_path, "a") as f:
-            f.write(f"[Epoch {state.epoch:.0f}]\n")
-
-            for k in sorted(bucket):
-                avg = sum(bucket[k]) / len(bucket[k])
-                self.lang_eval[k].append((state.epoch, avg))
-
-                print(f"  {k:<30} : {avg:.4f}")
-                f.write(f"{k:<30} : {avg:.4f}\n")
+                f.write(
+                    f"{b:<35} | "
+                    f"loss={avg:.4f} | "
+                    f"weight={state_obj.weight:.3f}\n"
+                )
 
             f.write("\n")
-
-loss_tracker = LangAwareLossCallback(
-    OUT_DIR,
-    eval_dataset=val_ds,
-    tokenizer=tokenizer,
-)
-
-# ======================================================
-# TRAINER
-# ======================================================
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_ds,
-    eval_dataset=val_ds,
-    data_collator=MetadataSafeDataCollator(tokenizer, model),
-    callbacks=[loss_tracker],
-)
 
 # ======================================================
 # TRAIN
 # ======================================================
+patience_cb = PatienceCallback()
+
+trainer = WeightedTrainer(
+    model=model,
+    args=TrainingArguments(
+        output_dir=OUT_DIR,
+        num_train_epochs=config.EPOCHS,
+        per_device_train_batch_size=config.BATCH_SIZE,
+        per_device_eval_batch_size=config.BATCH_SIZE,
+        learning_rate=config.LEARNING_RATE,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        save_total_limit=1,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        bf16=(device.type == "cuda"),
+        report_to="none",
+        remove_unused_columns=False,
+    ),
+    train_dataset=train_ds,
+    eval_dataset=val_ds,
+    data_collator=BucketAwareCollator(tokenizer, model),
+    callbacks=[patience_cb],
+)
+
 trainer.train()
-trainer.save_model(OUT_DIR)
-tokenizer.save_pretrained(OUT_DIR)
 
-# ======================================================
-# SAVE LANG LOSS CSV + PLOTS (UNCHANGED)
-# ======================================================
-with open(os.path.join(OUT_DIR, "lang_eval_losses.csv"), "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["epoch", "lang_direction", "loss"])
-    for k, vals in loss_tracker.lang_eval.items():
-        for e, l in vals:
-            writer.writerow([e, k, l])
+if RANK == 0:
 
-for k, vals in loss_tracker.lang_eval.items():
-    plt.figure()
-    plt.plot([x[0] for x in vals], [x[1] for x in vals], marker="o")
-    plt.title(f"Eval Loss: {k}")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.grid(True)
-    plt.savefig(os.path.join(OUT_DIR, f"loss_{k}.png"), dpi=150)
-    plt.close()
+    print("💾 Saving BEST model to final_model_weight/")
+    trainer.save_model(FINAL_WEIGHT_DIR)
+    tokenizer.save_pretrained(FINAL_WEIGHT_DIR)
 
-# ======================================================
-# BLEU + chrF (UNCHANGED)
-# ======================================================
-def evaluate_bleu_chrf(model, tokenizer, dataset):
-    scores = defaultdict(lambda: {"refs": [], "hyps": []})
+    csv_path = os.path.join(OUT_DIR, "lang_eval_losses.csv")
 
-    model.eval()
-    for ex in dataset:
-        tokenizer.src_lang = ex["source_lang"]
-        tokenizer.tgt_lang = ex["target_lang"]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["epoch", "bucket", "loss", "weight"])
 
-        inp = tokenizer(ex["source_sentence"], return_tensors="pt").to(model.device)
-        gen = model.generate(**inp, max_length=128)
-        pred = tokenizer.decode(gen[0], skip_special_tokens=True)
+        for b, vals in patience_cb.lang_eval.items():
+            for e, l, w in vals:
+                writer.writerow([e, b, l, w])
 
-        key = f"{ex['tribal_lang']}_{ex['direction']}"
-        scores[key]["refs"].append(ex["target_sentence"])
-        scores[key]["hyps"].append(pred)
+    for b, vals in patience_cb.lang_eval.items():
+        plt.figure()
+        plt.plot([x[0] for x in vals], [x[1] for x in vals], marker="o")
+        plt.title(f"Eval Loss: {b}")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.grid(True)
+        plt.savefig(os.path.join(OUT_DIR, f"loss/loss_{b}.png"), dpi=150)
+        plt.close()
 
-    out = {}
-    for k, v in scores.items():
-        out[k] = {
-            "BLEU": corpus_bleu(v["hyps"], [v["refs"]]).score,
-            "chrF": corpus_chrf(v["hyps"], [v["refs"]]).score,
-        }
-    return out
-
-metrics = evaluate_bleu_chrf(model, tokenizer, val_ds)
-
-with open(os.path.join(OUT_DIR, "bleu_chrf.json"), "w") as f:
-    json.dump(metrics, f, indent=2)
-
-print("✅ Training + hub-aware language-wise evaluation complete.")
-print(f"📁 Results saved to {OUT_DIR}")
+print("✅ Training complete with per-language patience + weight decay + temperature sampling.")
