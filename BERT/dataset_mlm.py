@@ -9,6 +9,9 @@ class MLMDataset(Dataset):
         self.cls, self.sep = cls, sep
         self.mask, self.pad = mask, pad
 
+        self.special = {cls, sep, mask, pad}
+
+
     def __len__(self):
         return len(self.data)
 
@@ -25,7 +28,12 @@ class MLMDataset(Dataset):
                 if r < 0.8:
                     ids[i] = self.mask
                 elif r < 0.9:
-                    ids[i] = random.randint(0, self.cfg.vocab_size - 1)
+                    while True:
+                        rand = random.randint(0, self.cfg.vocab_size - 1)
+                        if rand not in self.special:
+                            ids[i] = rand
+                            break
+
 
         pad_len = self.cfg.max_len - len(ids)
         ids += [self.pad] * pad_len

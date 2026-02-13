@@ -16,24 +16,29 @@ class MultiHeadAttention(nn.Module):
 
         self.rope = RoPE(self.d, max_len=cfg.max_len)
 
-    def forward(self, x):
+    def forward(self, x, pad_mask=None):
         B, T, C = x.shape
 
-        # Project
         qkv = self.qkv(x).view(B, T, 3, self.h, self.d)
-        q, k, v = qkv.unbind(dim=2)  # [B, T, H, D]
+        q, k, v = qkv.unbind(dim=2)
 
-        # ✅ Apply RoPE BEFORE transpose
+        # Apply RoPE
         q = self.rope(q)
         k = self.rope(k)
 
-        # FlashAttention expects [B, H, T, D]
-        q = q.transpose(1, 2)
+        q = q.transpose(1, 2)  # [B, H, T, D]
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
+        if pad_mask is not None:
+            # [B, T] -> [B, 1, 1, T]
+            attn_mask = pad_mask[:, None, None, :].to(torch.bool)
+        else:
+            attn_mask = None
+
         attn = F.scaled_dot_product_attention(
             q, k, v,
+            attn_mask=attn_mask,
             is_causal=False
         )
 
