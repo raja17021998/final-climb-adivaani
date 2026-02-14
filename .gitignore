@@ -1,5 +1,5 @@
 # ======================================================
-# Model Weights & Artifacts
+# Model Weights & Artifacts (never commit heavy checkpoints)
 # ======================================================
 *.pt
 *.pth
@@ -7,54 +7,27 @@
 *.ckpt
 *.safetensors
 *.onnx
-*.txt
 
-# Never commit pretrained models
+# HuggingFace / model artifacts
+**/config.json
+**/generation_config.json
+**/tokenizer.json
+**/tokenizer_config.json
+
+# Training logs & saved weights
+logs/
+model_weights/
+checkpoints/
+
+# Never commit pretrained model directories
 BERT-based-models/
 
-# Images
+# ======================================================
+# Images (generated plots, visualizations)
+# ======================================================
 *.png
 *.jpg
 *.jpeg
-
-# __pycache__
-* .pyc
-
-
-# ======================================================
-# GLoVE (ignore data, keep scripts)
-# ======================================================
-GLoVE/*/
-!GLoVE/*.py
-!GLoVE/*.sh
-
-# ======================================================
-# Word2Vec (ignore data, keep scripts)
-# ======================================================
-Word2Vec/*/
-!Word2Vec/*.py
-!Word2Vec/*.sh
-
-# ======================================================
-# Tokenization (keep only tokenizer.py)
-# ======================================================
-tokenization/*
-!tokenization/tokenizer.py
-
-# ======================================================
-# Outputs & datasets
-# ======================================================
-foundation-model/outputs/
-datasets/
-*.csv
-*.tsv
-*.jsonl
-*.parquet
-
-
-# Large text corpora (never commit)
-**/corpus.txt
-
 
 # ======================================================
 # Python junk
@@ -68,3 +41,49 @@ datasets/
 # ======================================================
 .DS_Store
 Thumbs.db
+
+# ======================================================
+# GLoVE (ignore data folders, keep scripts)
+# ======================================================
+GLoVE/*/
+!GLoVE/*.py
+!GLoVE/*.sh
+
+# ======================================================
+# Word2Vec (ignore data folders, keep scripts)
+# ======================================================
+Word2Vec/*/
+!Word2Vec/*.py
+!Word2Vec/*.sh
+
+# ======================================================
+# Tokenization (keep only tokenizer implementation)
+# ======================================================
+tokenization/*
+!tokenization/tokenizer.py
+
+# ======================================================
+# Outputs & Datasets (never commit large experiment data)
+# ======================================================
+foundation-model/outputs/
+datasets/
+*.csv
+*.tsv
+*.parquet
+
+# Large raw corpora
+**/corpus.txt
+
+# ======================================================
+# Research Experiment Noise
+# ======================================================
+loss.json
+metrics.json
+eval_results.json
+train.log
+*.log
+
+# ======================================================
+# Prevent accidental nested repos or temp dirs
+# ======================================================
+.gitmodules
