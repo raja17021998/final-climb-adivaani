@@ -36,11 +36,31 @@ BERT-based-models/
 *.pyc
 *.pyo
 
+
+
 # ======================================================
 # OS junk
 # ======================================================
 .DS_Store
 Thumbs.db
+
+# ======================================================
+# m_garud (ignore data/artifacts, keep source scripts)
+# ======================================================
+m_garud/*/
+!m_garud/*.py
+!m_garud/*.sh
+!m_garud/__init__.py
+
+
+# ======================================================
+# GARuD: keep only source code (.py, .sh)
+# ignore datasets, models, artifacts, configs
+# ======================================================
+GARuD/**
+!GARuD/**/*.py
+!GARuD/**/*.sh
+
 
 # ======================================================
 # GLoVE (ignore data folders, keep scripts)
