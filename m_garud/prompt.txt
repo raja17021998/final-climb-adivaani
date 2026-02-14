@@ -1,0 +1,249 @@
+```
+\documentclass{article}
+
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tabularx}
+
+\title{m-GARuD: Multi-Teacher Guided Representation Learning for Ultra-Low-Resource Tribal Languages}
+\author{Shashwat Bhardwaj}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Problem Setting and Motivation}
+
+Ultra-low-resource tribal languages face a structural limitation that renders conventional self-supervised pretraining ineffective: insufficient textual diversity to induce stable semantic abstractions. Sparse corpora, high morphological productivity, flexible word order, and noisy orthographic conventions collectively lead to high-variance representations and severe overfitting when models are trained in isolation.
+
+At the same time, these languages are not linguistically isolated. Each exhibits systematic affinity with one or more high-resource languages, such as Hindi, Marathi, Telugu, or Gujarati. These relationships provide a valuable source of semantic supervision, provided that cross-lingual knowledge is injected in a controlled, selective, and optimization-stable manner.
+
+The objective of m-GARuD is to learn a \emph{single foundational encoder} shared across multiple tribal languages that:
+\begin{itemize}
+    \item preserves multilingual semantic structure,
+    \item enables language-specific adaptation,
+    \item avoids catastrophic overfitting under extreme data scarcity,
+    \item and scales naturally to new tribal languages.
+\end{itemize}
+
+\section{Core Design Principles}
+
+The m-GARuD framework is guided by the following principles:
+
+\begin{enumerate}
+    \item \textbf{Frozen Semantic Anchors}: High-resource multilingual knowledge should act as a fixed semantic reference, not a moving target.
+    \item \textbf{Token-Level Knowledge Transfer}: Morphology and word-order variation require fine-grained token-level supervision.
+    \item \textbf{Teacher Selectivity}: Different teachers provide complementary signals and must be explicitly routed.
+    \item \textbf{Stable Optimization}: Learning signals of different granularity must be balanced automatically.
+    \item \textbf{Unified Modeling}: All tribal languages must share a single encoder with explicit language conditioning.
+\end{enumerate}
+
+\section{Notation}
+
+Let:
+\begin{itemize}
+    \item $\mathcal{L}$ denote the set of tribal languages.
+    \item $\mathcal{T}(\ell)$ denote the set of teacher languages relevant to tribal language $\ell$.
+    \item $B$ denote batch size.
+    \item $T_t$ denote the tribal sequence length.
+    \item $T_s^{(l)}$ denote the teacher sequence length for teacher $l$.
+    \item $d$ denote the Student hidden dimension.
+    \item $H$ denote the number of query heads.
+    \item $G$ denote the number of key--value groups, with $G < H$.
+    \item $d_h = d / H$ denote the per-head dimension.
+\end{itemize}
+
+\section{Mathematical Formulation of m-GARuD}
+
+We now describe the complete end-to-end mathematical flow of the proposed framework.
+
+\subsection{Input Tokenization and Language Conditioning}
+
+All inputs are tokenized using a shared SentencePiece tokenizer.
+
+For a tribal input sentence:
+\[
+\mathbf{x}^{(\ell)} \in \mathbb{N}^{B \times T_t},
+\]
+we introduce a learnable language identity token:
+\[
+\mathbf{e}_\ell \in \mathbb{R}^{d}.
+\]
+
+This token is prepended to the sequence:
+\[
+\mathbf{x}^{(\ell)} \leftarrow [\texttt{<LANG}_\ell\texttt{>} ; \mathbf{x}^{(\ell)}].
+\]
+
+The language token is never masked, never attends to teacher tokens, and remains present during downstream inference.
+
+\subsection{Frozen mBERT Semantic Backbone}
+
+The first $K$ layers of a pretrained multilingual BERT encoder are frozen and shared across all tribal languages.
+
+\[
+\mathbf{H}^{(0)} =
+\text{mBERT}_{\le K}(\mathbf{x}^{(\ell)})
+\in \mathbb{R}^{B \times (T_t+1) \times d}.
+\]
+
+These layers provide a stable multilingual semantic scaffold and receive no gradient updates.
+
+\subsection{Trainable Student Transformer Layers}
+
+Above the frozen backbone, the Student encoder consists of $L$ trainable Transformer layers. Each layer employs Language-Conditioned RMS normalization, rotary positional embeddings, and Grouped Query Attention (GQA).
+
+\subsubsection{Language-Conditioned RMS Normalization}
+
+To facilitate deeper language adaptation without the overhead of full adapters, we employ language-specific gain ($\gamma_\ell$) and bias ($\beta_\ell$) parameters:
+\[
+\hat{\mathbf{H}}^{(l)} = \text{RMSNorm}(\mathbf{H}^{(l)}) \odot \gamma_\ell + \beta_\ell,
+\]
+where $\gamma_\ell, \beta_\ell \in \mathbb{R}^{d}$ are learned for each language $\ell \in \mathcal{L}$.
+
+\subsubsection{Grouped Query Self-Attention}
+
+Query, key, and value projections are defined as:
+\[
+\mathbf{Q} = \hat{\mathbf{H}}^{(l)} \mathbf{W}_Q,
+\quad
+\mathbf{K} = \hat{\mathbf{H}}^{(l)} \mathbf{W}_K,
+\quad
+\mathbf{V} = \hat{\mathbf{H}}^{(l)} \mathbf{W}_V,
+\]
+with reshaped forms:
+\[
+\mathbf{Q} \in \mathbb{R}^{B \times H \times T \times d_h}, \quad
+\mathbf{K}, \mathbf{V} \in \mathbb{R}^{B \times G \times T \times d_h}.
+\]
+
+Rotary positional embeddings are applied to $\mathbf{Q}$ and $\mathbf{K}$. Each query head $h$ maps to a key--value group $\gamma(h) = \lfloor \frac{hG}{H} \rfloor$.
+
+\subsubsection{Feed-Forward Network}
+
+\[
+\mathbf{F} = \mathbf{W}_2 \text{SiLU}(\mathbf{W}_1 \mathbf{H}^{(l+1)}),
+\quad
+\mathbf{H}^{(l+1)} \leftarrow \mathbf{H}^{(l+1)} + \text{ResidualScale}(\mathbf{F}).
+\]
+
+After $L$ layers: $\mathbf{H}^{S} \in \mathbb{R}^{B \times (T_t+1) \times d}$.
+
+\subsection{Token-Level Pivot Attention with Teacher-Specific GQA}
+
+Pivot Attention is applied at the final Student layer. To account for asymmetric sequence lengths between tribal ($T_t$) and teacher ($T_s^{(l)}$) sequences, we introduce a relative positional bias $\lambda$.
+
+For each teacher language $l \in \mathcal{T}(\ell)$:
+\[
+\mathbf{A}_{t,s}^{(l)} = \text{Softmax} \left( \frac{\mathbf{Q}_t^{(l)} (\mathbf{K}_s^{(l)})^\top}{\sqrt{d_h}} - \lambda \cdot \left| \frac{t}{T_t} - \frac{s}{T_s^{(l)}} \right| \right),
+\]
+where $\lambda$ is a learnable scalar that encourages monotonic alignment while preserving flexibility for word-order drift. The resulting representation is $\tilde{\mathbf{H}}^{S \leftarrow l} \in \mathbb{R}^{B \times T_t \times d}$.
+
+\subsection{Convex Teacher Fusion}
+
+For each token $t$, we collect the Student representation and all teacher-conditioned representations:
+\[
+\mathbf{C}_t =
+\left[
+\mathbf{h}_t^{S},
+\tilde{\mathbf{h}}_t^{S \leftarrow l_1},
+\dots,
+\tilde{\mathbf{h}}_t^{S \leftarrow l_K}
+\right]
+\in \mathbb{R}^{(K+1) \times d}.
+\]
+
+Convex fusion weights are computed from the Student state:
+\[
+\boldsymbol{\beta}_t = \text{Softmax}\left( \frac{\mathbf{W}_c \mathbf{h}_t^{S}}{\tau_c} \right).
+\]
+
+The final token representation is: $\mathbf{h}_t^{\text{final}} = \sum_{j=1}^{K+1} \beta_{t,j} \mathbf{C}_{t,j}$.
+
+\subsection{Optimization Objectives}
+
+\begin{enumerate}
+    \item \textbf{SpanMLM}: Computed on masked tribal spans using $\mathbf{h}_t^{\text{final}}$.
+    \item \textbf{Contrastive Alignment}: NT-Xent loss between tribal mean-pooled embeddings $\mathbf{z}^{(\ell)}$ and frozen HindiBERT teacher embeddings $\mathbf{z}^{(\text{Hi})}$.
+    \item \textbf{Uncertainty Weighting}:
+    \[
+    \mathcal{L}_{\text{total}} = \frac{1}{2\sigma_1^2} \mathcal{L}_{\text{SpanMLM}} + \frac{1}{2\sigma_2^2} \mathcal{L}_{\text{NT}} + \log \sigma_1 \sigma_2.
+    \]
+\end{enumerate}
+
+\section{Training Algorithm}
+
+\begin{algorithm}[t]
+\caption{m-GARuD Training Procedure}
+\small
+\begin{algorithmic}[1]
+\For{each training step}
+    \State Sample tribal batch and prepend $\texttt{<LANG}_\ell\texttt{>}$
+    \State Encode via frozen mBERT and Student layers (with Lang-RMSNorm)
+    \For{each teacher $l \in \mathcal{T}(\ell)$}
+        \State Encode teacher sentence and apply Pivot Attention with Positional Bias
+    \EndFor
+    \State Compute Convex Fusion weights and final $\mathbf{h}_t^{\text{final}}$
+    \State Calculate weighted $\mathcal{L}_{\text{total}}$ and update Student parameters
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\section{Summary}
+
+m-GARuD anchors ultra-low-resource representations in frozen multilingual semantics while utilizing teacher-guided pivot attention with positional priors and language-conditioned normalization. This ensures stability and cross-lingual alignment despite extreme data scarcity.
+
+\end{document}
+```
+
+We will code this step by step and module by module. In the image I have attached the dir structure of predownloaded BERT models and datasets. 
+
+BERT modules main path: /home/user/Desktop/Shashwat/final-climb/BERT-based-models
+datasets main path: /home/user/Desktop/Shashwat/final-climb/datasets
+
+For testing purposes I am usinng sampled, but at last I will the use main. Create a data-sampler script where I can change N, the number of data-points, and it creates the files with those number of points. 
+
+I want this whole code to be fully transferable across diff machines. So keep all paths and all hyperparams in one file, so it doesn't become a hazzle. You can initialise a BASE_DIR: /home/user/Desktop/Shashwat/final-climb
+
+In future, if I migrate the code, I just change the BASE_DIR, and the code works.
+
+I will put all code in dir m-garud. It's path is: /home/user/Desktop/Shashwat/final-climb/m-garud
+
+During training code, training should be such that one batch of one traibal language is loaded, then another batch of another tribal language is loaded. 
+
+Create proper train-val loss plots and logs. I want to see all the three losses: total, span-mlm and nt-xent (Take care if they operate on diff scales) 
+
+In future I will add downstream tasks, where I will extract embeddings from student and use for downstream tasks. 
+
+Use sentence-piece tokenizer, and I want the tokenizers to be consistent at all steps. 
+
+Currently we will be working for Bhili and Gondi. Make the code such that it can be extended to other tribal languages
+
+Mapping: 
+
+Bhili-> Hindi, Marathi, Gujarati
+Gondi-> Hindi, Marathi, Telegu
+
+Hindi- Bhili file looks like this
+
+```
+Hindi,Bhili,Marathi,Gujarati
+मुझे UAN नंबर 954309088618 वाले खाते के लिए EPFO पासबुक स्टेटमेंट चाहिए,मने Universal Account Number 9543088618 वाळां खाता हारू EPFO पासबुक स्टेटमेंट जोवे ।,मला यूएएन क्रमांक 954309088618 असणाऱ्या खात्यासाठी ईपीएफओ पासबुक स्टेटमेंटची आवश्यकता आहे.,મને યુએએન નંબર 954309088618વાળા ખાતા માટે ઇપીએફઓ પાસબુક સ્ટેટમેન્ટની જરૂર છે
+उसने व्यक्त किया कि यह जानकारी आरटीआई से मिली है।,तिहुयें वताडियू की ये जाणकारी आरटीआई थी मळी से।,"आरटीआयकडून ही माहिती मिळाली आहे, असे त्यांनी सांगितले.",તેમણે જણાવ્યું હતું કે આ માહિતી આરટીઆઈ પાસેથી મળી છે.
+```
+
+And Hindi-Gondi file looks like this:
+
+```
+Hindi,Gondi,Telugu,Marathi
+उनका जन्मदिन बाल दिवस के रूप में मनाया जाता है,ओना जनुम दियातुन पीला दिवस ता पोरोय ते माने मायतोर।,ఆయన పుట్టినరోజు బాలల దినోత్సవంగా జరుపుకుంటారు.,त्यांचा वाढदिवस बालदिन म्हणून साजरा केला जातो.
+डॉक्टर ऑपरेशन कर रहा होगा।,डाक्टेर अपरेसिंग कीसोर मंदानुर होही।,డాక్టర్ శస్త్రచికిత్స చేస్తున్నారు.,डॉक्टर शस्त्रक्रिया करत असतील.
+नगर पालिका स्थानीय खेलों की प्रतियोगिताओं का आयोजन करती है,नगर पालिका इगाडंग कर्रसानंग केली ना केल्क ता तैयारी कियायता।,మునిసిపాలిటీ స్థానిక క్రీడల పోటీలను నిర్వహిస్తుంది,नगरपालिका स्थानिक क्रीडा स्पर्धा आयोजित करते.
+```
+We will add further languages data in future. 
+
+
+
+
