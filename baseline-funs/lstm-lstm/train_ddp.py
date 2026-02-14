@@ -15,8 +15,8 @@ from tqdm import tqdm
 import config as cfg
 from text_protection import protect_text
 
-LOSS_BASE_DIR = os.path.join(cfg.BASE_DIR, "baseline-funs/loss")
-LOG_BASE_DIR = os.path.join(cfg.LOGS_DIR, "lstm_lstm")
+LOSS_BASE_DIR = os.path.join(cfg.PLOTS_DIR)
+LOG_BASE_DIR = os.path.join(cfg.LOGS_DIR)
 EARLY_STOP_PATIENCE = 3
 
 def init_distributed():

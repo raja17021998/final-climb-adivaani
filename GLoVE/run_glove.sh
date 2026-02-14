@@ -1,12 +1,14 @@
 #!/bin/bash
 set -e
 
-BASE="/home/shashwat1/final-climb-shashwat-do-not-delete/GLoVE"
-PYTHON="/home/shashwat1/miniconda3/envs/stark-latest/bin/python"
+BASE="/home/jovyan/final-climb-shashwat-do-not-delete/GLoVE"
+PYTHON=$(which python)
+
+echo "Using python: $PYTHON"
+echo "Word2Vec dir: $BASE"
 
 GPUS=$(nvidia-smi -L | wc -l)
 echo "Detected GPUs: $GPUS"
-echo "Using python: $PYTHON"
 
 run_lang () {
   LANG=$1
@@ -22,14 +24,11 @@ run_lang () {
   fi
 }
 
-# ----------------------------
-# Languages
-# ----------------------------
-run_lang Bhili
-run_lang Santali
-run_lang Garo
-run_lang Mundari
-run_lang Gondi
-run_lang Kui
+run_lang bhili
+run_lang santali
+run_lang mundari
+run_lang gondi
+run_lang kui
+run_lang garo
 
-echo "ALL GLoVe TRAININGS COMPLETED"
+echo "ALL GLoVE TRAININGS COMPLETED"

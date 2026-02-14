@@ -12,6 +12,14 @@
 # Never commit pretrained models
 BERT-based-models/
 
+# Images
+*.png
+*.jpg
+*.jpeg
+
+# __pycache__
+* .pyc
+
 
 # ======================================================
 # GLoVE (ignore data, keep scripts)
